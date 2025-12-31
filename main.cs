@@ -242,7 +242,8 @@ namespace Sharp
             int best = int.MinValue;
             List<Move> bestPv = new List<Move>();
 
-            foreach (var move in board.Moves())
+            var legalMoves = board.Moves();
+            foreach (var move in legalMoves)
             {
                 if (moveTime > 0 && TimeExpired())
                     break;
@@ -277,6 +278,7 @@ namespace Sharp
             int score = 0;
             string ascii = board.ToAscii();
 
+            // ----------------- Material -----------------
             score += Count(ascii, 'P') * 100;
             score += Count(ascii, 'N') * 320;
             score += Count(ascii, 'B') * 330;
@@ -289,6 +291,33 @@ namespace Sharp
             score -= Count(ascii, 'r') * 500;
             score -= Count(ascii, 'q') * 900;
 
+            // ----------------- Check & Checkmate -----------------
+            bool opponentInCheck = false;
+            bool opponentInCheckmate = false;
+
+            int numMoves = board.Moves().Length;
+
+            if (board.Turn == PieceColor.White) // White to move
+            {
+                opponentInCheck = board.BlackKingChecked;
+                opponentInCheckmate = numMoves == 0 && board.BlackKingChecked;
+            }
+            else // Black to move
+            {
+                opponentInCheck = board.WhiteKingChecked;
+                opponentInCheckmate = numMoves == 0 && board.WhiteKingChecked;
+            }
+
+            if (opponentInCheck)
+                score += 50;       // bonus for giving check
+
+            if (opponentInCheckmate)
+                score += 10000;    // bonus for checkmate
+
+            // ----------------- Legal Move Bonus -----------------
+            score += numMoves * 5;
+
+            // ----------------- Return -----------------
             return board.Turn == PieceColor.White ? score : -score;
         }
 
