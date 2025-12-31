@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Chess;
 
@@ -10,6 +11,9 @@ namespace Sharp
         static int searchDepth = 4;
         static int moveTime = 0; // milliseconds
         static DateTime searchStart;
+        static long nodeCount = 0;
+        static List<Move> principalVariation = new List<Move>();
+        static List<Move> tempPv = new List<Move>();
 
         static void Main()
         {
@@ -37,7 +41,7 @@ namespace Sharp
                 else if (line.StartsWith("go"))
                 {
                     ParseGo(line);
-                    var best = FindBestMove(searchDepth);
+                    var best = FindBestMove();
                     Console.WriteLine($"bestmove {best}");
                 }
                 else if (line == "ucinewgame")
@@ -118,29 +122,89 @@ namespace Sharp
 
         // ---------------- SEARCH ----------------
 
-        static string FindBestMove(int depth)
+        static string FindBestMove()
         {
             searchStart = DateTime.Now;
-            var moves = board.Moves();
-            int alpha = int.MinValue + 1;
-            int beta = int.MaxValue;
+            nodeCount = 0;
+            Move bestMove = board.Moves()[0];
 
-            Move bestMove = moves[0];
-
-            foreach (var move in moves)
+            if (moveTime > 0)
             {
-                if (moveTime > 0 && TimeExpired())
-                    break;
-
-                board.Move(move);
-                int score = -Negamax(depth - 1, -beta, -alpha);
-                board.Cancel();
-
-                if (score > alpha)
+                // Iterative deepening with time limit
+                for (int depth = 1; depth <= 256; depth++)
                 {
-                    alpha = score;
-                    bestMove = move;
+                    principalVariation.Clear();
+                    int alpha = int.MinValue + 1;
+                    int beta = int.MaxValue;
+                    int bestScore = int.MinValue;
+
+                    foreach (var move in board.Moves())
+                    {
+                        if (TimeExpired())
+                            break;
+
+                        board.Move(move);
+                        principalVariation.Clear();
+                        int score = -Negamax(depth - 1, -beta, -alpha, principalVariation);
+                        board.Cancel();
+
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestMove = move;
+                        }
+
+                        if (score > alpha)
+                            alpha = score;
+                    }
+
+                    if (TimeExpired())
+                        break;
+
+                    long elapsed = (long)(DateTime.Now - searchStart).TotalMilliseconds;
+                    double nps = elapsed > 0 ? (nodeCount * 1000.0) / elapsed : 0;
+
+                    var pvMoves = new List<Move> { bestMove };
+                    pvMoves.AddRange(principalVariation.Take(depth - 1));
+                    var pvString = string.Join(" ", pvMoves.Select(MoveToUci));
+                    Console.WriteLine($"info depth {depth} nodes {nodeCount} score cp {bestScore} pv {pvString} time {elapsed} nps {(long)nps}");
+
+                    if (TimeExpired())
+                        break;
                 }
+            }
+            else
+            {
+                // Fixed depth search
+                principalVariation.Clear();
+                int alpha = int.MinValue + 1;
+                int beta = int.MaxValue;
+                int bestScore = int.MinValue;
+
+                foreach (var move in board.Moves())
+                {
+                    board.Move(move);
+                    principalVariation.Clear();
+                    int score = -Negamax(searchDepth - 1, -beta, -alpha, principalVariation);
+                    board.Cancel();
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestMove = move;
+                    }
+
+                    if (score > alpha)
+                        alpha = score;
+                }
+
+                long elapsed = (long)(DateTime.Now - searchStart).TotalMilliseconds;
+                double nps = elapsed > 0 ? (nodeCount * 1000.0) / elapsed : 0;
+
+                var pvMoves = new List<Move> { bestMove };
+                pvMoves.AddRange(principalVariation.Take(searchDepth - 1));
+                var pvString = string.Join(" ", pvMoves.Select(MoveToUci));
+                Console.WriteLine($"info depth {searchDepth} nodes {nodeCount} score cp {bestScore} pv {pvString} time {elapsed} nps {(long)nps}");
             }
 
             return MoveToUci(bestMove);
@@ -165,8 +229,10 @@ namespace Sharp
             return moveStr; // fallback
         }
 
-        static int Negamax(int depth, int alpha, int beta)
+        static int Negamax(int depth, int alpha, int beta, List<Move> pv)
         {
+            nodeCount++;
+
             if (moveTime > 0 && TimeExpired())
                 return Evaluate();
 
@@ -174,6 +240,7 @@ namespace Sharp
                 return Evaluate();
 
             int best = int.MinValue;
+            List<Move> bestPv = new List<Move>();
 
             foreach (var move in board.Moves())
             {
@@ -181,11 +248,16 @@ namespace Sharp
                     break;
 
                 board.Move(move);
-                int score = -Negamax(depth - 1, -beta, -alpha);
+                List<Move> childPv = new List<Move>();
+                int score = -Negamax(depth - 1, -beta, -alpha, childPv);
                 board.Cancel();
 
                 if (score > best)
+                {
                     best = score;
+                    bestPv = new List<Move> { move };
+                    bestPv.AddRange(childPv);
+                }
 
                 if (best > alpha)
                     alpha = best;
@@ -194,6 +266,7 @@ namespace Sharp
                     break;
             }
 
+            pv.AddRange(bestPv);
             return best;
         }
 
