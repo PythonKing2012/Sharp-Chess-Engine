@@ -8,6 +8,8 @@ namespace Sharp
     {
         static ChessBoard board = new ChessBoard();
         static int searchDepth = 4;
+        static int moveTime = 0; // milliseconds
+        static DateTime searchStart;
 
         static void Main()
         {
@@ -102,10 +104,15 @@ namespace Sharp
         static void ParseGo(string line)
         {
             var parts = line.Split(' ');
+            moveTime = 0; // reset
+            searchDepth = 4; // default
+
             for (int i = 0; i < parts.Length; i++)
             {
                 if (parts[i] == "depth" && i + 1 < parts.Length)
                     searchDepth = int.Parse(parts[i + 1]);
+                else if (parts[i] == "movetime" && i + 1 < parts.Length)
+                    moveTime = int.Parse(parts[i + 1]);
             }
         }
 
@@ -113,6 +120,7 @@ namespace Sharp
 
         static string FindBestMove(int depth)
         {
+            searchStart = DateTime.Now;
             var moves = board.Moves();
             int alpha = int.MinValue + 1;
             int beta = int.MaxValue;
@@ -121,6 +129,9 @@ namespace Sharp
 
             foreach (var move in moves)
             {
+                if (moveTime > 0 && TimeExpired())
+                    break;
+
                 board.Move(move);
                 int score = -Negamax(depth - 1, -beta, -alpha);
                 board.Cancel();
@@ -133,6 +144,11 @@ namespace Sharp
             }
 
             return MoveToUci(bestMove);
+        }
+
+        static bool TimeExpired()
+        {
+            return (DateTime.Now - searchStart).TotalMilliseconds >= moveTime;
         }
 
         static string MoveToUci(Move move)
@@ -151,6 +167,9 @@ namespace Sharp
 
         static int Negamax(int depth, int alpha, int beta)
         {
+            if (moveTime > 0 && TimeExpired())
+                return Evaluate();
+
             if (depth == 0 || board.IsEndGame)
                 return Evaluate();
 
@@ -158,6 +177,9 @@ namespace Sharp
 
             foreach (var move in board.Moves())
             {
+                if (moveTime > 0 && TimeExpired())
+                    break;
+
                 board.Move(move);
                 int score = -Negamax(depth - 1, -beta, -alpha);
                 board.Cancel();
