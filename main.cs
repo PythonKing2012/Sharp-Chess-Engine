@@ -138,7 +138,8 @@ namespace Sharp
                     int beta = int.MaxValue;
                     int bestScore = int.MinValue;
 
-                    foreach (var move in board.Moves())
+                    var legalMoves = OrderMoves(board.Moves().ToArray());
+                    foreach (var move in legalMoves)
                     {
                         if (TimeExpired())
                             break;
@@ -181,7 +182,8 @@ namespace Sharp
                 int beta = int.MaxValue;
                 int bestScore = int.MinValue;
 
-                foreach (var move in board.Moves())
+                var legalMoves = OrderMoves(board.Moves().ToArray());
+                foreach (var move in legalMoves)
                 {
                     board.Move(move);
                     principalVariation.Clear();
@@ -234,15 +236,27 @@ namespace Sharp
             nodeCount++;
 
             if (moveTime > 0 && TimeExpired())
-                return Evaluate();
+                return Evaluate(depth);
 
-            if (depth == 0 || board.IsEndGame)
-                return Evaluate();
+            if (depth == 0)
+                return Evaluate(depth);
 
             int best = int.MinValue;
             List<Move> bestPv = new List<Move>();
 
-            var legalMoves = board.Moves();
+            var legalMoves = OrderMoves(board.Moves().ToArray());
+
+            // If no legal moves, check if it's checkmate or stalemate
+            if (legalMoves.Length == 0)
+            {
+                bool inCheck = board.Turn == PieceColor.White ? board.WhiteKingChecked : board.BlackKingChecked;
+                if (inCheck)
+                {
+                    // Checkmate - side to move is mated, so opponent wins
+                    return -(1000000 + (depth * 100));  // Negative because it's bad for side to move
+                }
+            }
+
             foreach (var move in legalMoves)
             {
                 if (moveTime > 0 && TimeExpired())
@@ -271,9 +285,48 @@ namespace Sharp
             return best;
         }
 
+        static Move[] OrderMoves(Move[] moves)
+        {
+            // MVV-LVA: Most Valuable Victim – Least Valuable Attacker
+            int PieceValue(PieceType type) => type.Value switch
+            {
+                1 => 100,      // Pawn
+                2 => 500,      // Rook
+                3 => 320,      // Knight
+                4 => 330,      // Bishop
+                5 => 900,      // Queen
+                6 => 20000,    // King
+                _ => 0,
+            };
+
+            int MoveScore(Move move)
+            {
+                int score = 0;
+
+                int attackerValue = PieceValue(move.Piece.Type);
+
+                // Then captures
+                if (move.CapturedPiece != null)
+                {
+                    int victimValue = PieceValue(move.CapturedPiece.Type);
+                    score += (victimValue * 10) - attackerValue;
+                    score += 10000;
+                }
+
+                // Checks should be tried early (very valuable)
+                if (move.IsCheck)
+                    score += 100000 * attackerValue;  // Much higher priority!
+
+                return score;
+            }
+
+            // Sort descending: highest priority first
+            return moves.OrderByDescending(MoveScore).ToArray();
+        }
+
         // ---------------- EVALUATION ----------------
 
-        static int Evaluate()
+        static int Evaluate(int searchDepth)
         {
             int score = 0;
             string ascii = board.ToAscii();
@@ -293,26 +346,22 @@ namespace Sharp
 
             // ----------------- Check & Checkmate -----------------
             bool opponentInCheck = false;
-            bool opponentInCheckmate = false;
 
             int numMoves = board.Moves().Length;
 
             if (board.Turn == PieceColor.White) // White to move
             {
                 opponentInCheck = board.BlackKingChecked;
-                opponentInCheckmate = numMoves == 0 && board.BlackKingChecked;
             }
             else // Black to move
             {
                 opponentInCheck = board.WhiteKingChecked;
-                opponentInCheckmate = numMoves == 0 && board.WhiteKingChecked;
             }
 
             if (opponentInCheck)
-                score += 50;       // bonus for giving check
-
-            if (opponentInCheckmate)
-                score += 10000;    // bonus for checkmate
+            {
+                score += 50;
+            }
 
             // ----------------- Legal Move Bonus -----------------
             score += numMoves * 5;
