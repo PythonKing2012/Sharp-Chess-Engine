@@ -14,6 +14,8 @@ namespace Sharp
         static long nodeCount = 0;
         static List<Move> principalVariation = new List<Move>();
         static List<Move> tempPv = new List<Move>();
+        static List<Move> lastPv = new List<Move>();
+
 
         static void Main()
         {
@@ -130,7 +132,6 @@ namespace Sharp
 
             if (moveTime > 0)
             {
-                // Iterative deepening with time limit
                 for (int depth = 1; depth <= 256; depth++)
                 {
                     principalVariation.Clear();
@@ -176,7 +177,6 @@ namespace Sharp
             }
             else
             {
-                // Fixed depth search
                 principalVariation.Clear();
                 int alpha = int.MinValue + 1;
                 int beta = int.MaxValue;
@@ -208,6 +208,11 @@ namespace Sharp
                 var pvString = string.Join(" ", pvMoves.Select(MoveToUci));
                 Console.WriteLine($"info depth {searchDepth} nodes {nodeCount} score cp {bestScore} pv {pvString} time {elapsed} nps {(long)nps}");
             }
+
+            // ===== SAVE PV FOR NEXT SEARCH =====
+            lastPv.Clear();
+            lastPv.Add(bestMove);
+            lastPv.AddRange(principalVariation.Take(Math.Min(principalVariation.Count, 5))); // Store up to 5 moves
 
             return MoveToUci(bestMove);
         }
@@ -252,8 +257,7 @@ namespace Sharp
                 bool inCheck = board.Turn == PieceColor.White ? board.WhiteKingChecked : board.BlackKingChecked;
                 if (inCheck)
                 {
-                    // Checkmate - side to move is mated, so opponent wins
-                    return -(1000000 + (depth * 100));  // Negative because it's bad for side to move
+                    return -(1000000 + (depth * 100));
                 }
             }
 
@@ -303,6 +307,13 @@ namespace Sharp
             {
                 int score = 0;
 
+                // ===== PV MOVE ORDERING (HIGHEST PRIORITY) =====
+                if (lastPv.Count > 0 && MovesEqual(move, lastPv[0]))
+                {
+                    score += 1000000; // Extremely high priority
+                    return score;
+                }
+
                 int attackerValue = PieceValue(move.Piece.Type);
 
                 // Then captures
@@ -315,13 +326,18 @@ namespace Sharp
 
                 // Checks should be tried early (very valuable)
                 if (move.IsCheck)
-                    score += 100000 * attackerValue;  // Much higher priority!
+                    score += 100000 * attackerValue;
 
                 return score;
             }
 
             // Sort descending: highest priority first
             return moves.OrderByDescending(MoveScore).ToArray();
+        }
+
+        static bool MovesEqual(Move move1, Move move2)
+        {
+            return MoveToUci(move1) == MoveToUci(move2);
         }
 
         // ---------------- EVALUATION ----------------
