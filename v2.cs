@@ -374,6 +374,13 @@ namespace Sharp
                     continue;
                 }
 
+                // ===== TIER 1.5: CASTLING =====
+                if (move.IsCastling)
+                {
+                    scores[i] = 5_000_000;
+                    continue;
+                }
+
                 // ===== TIER 2: CAPTURES (MVV-LVA) =====
                 if (move.CapturedPiece != null)
                 {
@@ -402,7 +409,7 @@ namespace Sharp
                 scores[i] = score;
             }
 
-            int topCount = Math.Min(40, moves.Length);
+            int topCount = Math.Min(30, moves.Length);
 
             for (int i = 0; i < topCount; i++)
             {
@@ -448,6 +455,7 @@ namespace Sharp
         {
             int score = 0;
             string ascii = board.ToAscii();
+            float gamePhase = GetGamePhase(ascii);
 
             score += Count(ascii, 'P') * 100;
             score += Count(ascii, 'N') * 320;
@@ -472,9 +480,162 @@ namespace Sharp
             if (opponentInCheck)
                 score += 50;
 
-            score += numMoves * 5;
+            score += numMoves * 25;
+
+            float positionalScoreScale = 0.75f;
+
+            if (gamePhase > 0.75f)  // Endgame
+            {
+                score += GetCentralizationBonus(PieceType.King, 400f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Queen, 100f * positionalScoreScale, ascii);
+                score -= GetCentralizationBonus(PieceType.Rook, 75f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Bishop, 125f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Knight, 150f * positionalScoreScale, ascii);
+            }
+            else if (gamePhase < 0.4f)  // Opening
+            {
+                score += GetCentralizationBonus(PieceType.King, -500f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Queen, 100f * positionalScoreScale, ascii);
+                score -= GetCentralizationBonus(PieceType.Rook, 80f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Bishop, 120f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Knight, 200f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Pawn, 120f * positionalScoreScale, ascii);
+            }
+            else  // Middlegame
+            {
+                score += GetCentralizationBonus(PieceType.King, -250f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Queen, 150f * positionalScoreScale, ascii);
+                score -= GetCentralizationBonus(PieceType.Rook, 100f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Bishop, 140f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Knight, 165f * positionalScoreScale, ascii);
+                score += GetCentralizationBonus(PieceType.Pawn, 100f * positionalScoreScale, ascii);
+            }
 
             return board.Turn == PieceColor.White ? score : -score;
+        }
+
+        static float GetGamePhase(string ascii)
+        {
+            // Standard piece values
+            int Pawn = 1, Knight = 3, Bishop = 3, Rook = 5, Queen = 9;
+
+            // Maximum material at start (excluding kings)
+            int maxMaterial = (8 * Pawn) + (2 * Knight) + (2 * Bishop) + (2 * Rook) + (1 * Queen);
+            maxMaterial *= 2; // both sides
+
+            // Current material on board
+            int currentMaterial = 0;
+
+            currentMaterial += Count(ascii, 'P') * Pawn;
+            currentMaterial += Count(ascii, 'N') * Knight;
+            currentMaterial += Count(ascii, 'B') * Bishop;
+            currentMaterial += Count(ascii, 'R') * Rook;
+            currentMaterial += Count(ascii, 'Q') * Queen;
+
+            currentMaterial += Count(ascii, 'p') * Pawn;
+            currentMaterial += Count(ascii, 'n') * Knight;
+            currentMaterial += Count(ascii, 'b') * Bishop;
+            currentMaterial += Count(ascii, 'r') * Rook;
+            currentMaterial += Count(ascii, 'q') * Queen;
+
+            // Compute phase: 0 = opening, 1 = endgame
+            float phase = 1f - ((float)currentMaterial / maxMaterial);
+
+            // Clamp between 0 and 1
+            if (phase < 0f) phase = 0f;
+            if (phase > 1f) phase = 1f;
+
+            return phase;
+        }
+
+        static float[] GetPieceCentralization(PieceType type, string ascii)
+        {
+            List<float> centralizationValues = new List<float>();
+
+            // Piece characters for both colors
+            char whiteChar = char.ToUpper(GetPieceChar(type));
+            char blackChar = char.ToLower(GetPieceChar(type));
+
+            // Parse board and find all pieces of this type
+            int boardIndex = 0;
+            for (int rank = 0; rank < 8; rank++)
+            {
+                for (int file = 0; file < 8; file++)
+                {
+                    // Find the character in the ASCII representation
+                    while (boardIndex < ascii.Length && (ascii[boardIndex] == ' ' || ascii[boardIndex] == '\n' || ascii[boardIndex] == '-' || ascii[boardIndex] == '+' || ascii[boardIndex] == '|'))
+                        boardIndex++;
+
+                    if (boardIndex >= ascii.Length)
+                        break;
+
+                    char piece = ascii[boardIndex];
+                    boardIndex++;
+
+                    if (piece == whiteChar || piece == blackChar)
+                    {
+                        float centralization = CalculateCentralization(file, rank);
+
+                        // Flip sign for black pieces: white = [0, 1], black = [-1, 0]
+                        if (char.IsLower(piece))
+                            centralization = -centralization;
+
+                        centralizationValues.Add(centralization);
+                    }
+                }
+            }
+
+            return centralizationValues.ToArray();
+        }
+
+        static float CalculateCentralization(int file, int rank)
+        {
+            // Distance from center (0-3.5, where 3.5 is corner distance)
+            // Center of board is between d4/d5/e4/e5 (files 3-4, ranks 3-4)
+
+            float centerFile = 3.5f;
+            float centerRank = 3.5f;
+
+            float distFromCenterFile = Math.Abs(file - centerFile);
+            float distFromCenterRank = Math.Abs(rank - centerRank);
+
+            // Maximum distance from center (to corner) is approximately 3.5
+            float maxDistance = 3.5f;
+
+            // Chebyshev distance (max of file/rank distance)
+            float distance = Math.Max(distFromCenterFile, distFromCenterRank);
+
+            // Normalize: 0 = corner (distance 3.5), 1 = center (distance 0)
+            float centralization = 1f - (distance / maxDistance);
+
+            // Clamp to [0, 1]
+            if (centralization < 0f) centralization = 0f;
+            if (centralization > 1f) centralization = 1f;
+
+            return centralization;
+        }
+
+        static char GetPieceChar(PieceType type)
+        {
+            return type.Value switch
+            {
+                1 => 'P',  // Pawn
+                2 => 'R',  // Rook
+                3 => 'N',  // Knight
+                4 => 'B',  // Bishop
+                5 => 'Q',  // Queen
+                6 => 'K',  // King
+                _ => '?',
+            };
+        }
+
+        static int GetCentralizationBonus(PieceType type, float weight = 50f, string ascii = null)
+        {
+            if (ascii == null)
+                ascii = board.ToAscii();
+
+            var centralization = GetPieceCentralization(type, ascii);
+            return (int)(centralization.Sum() * weight);
         }
 
         static int Count(string s, char c)
