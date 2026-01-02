@@ -131,6 +131,7 @@ namespace Sharp
                     searchDepth = int.Parse(parts[i + 1]);
                 else if (parts[i] == "movetime" && i + 1 < parts.Length)
                     moveTime = int.Parse(parts[i + 1]);
+                    moveTime -= 500;
             }
         }
 
